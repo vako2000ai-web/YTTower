@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import './styles.css';
+import { EventQueue, EVENT_NAMES, type StreamEvent, type EventKind } from './events';
+import { CATEGORY_NAMES, recordKey, loadJson, saveJson, readRecord, type RunCategory } from './records';
 
 type SectorColor = 'gray' | 'red' | 'blue' | 'green' | 'violet';
 type PlayColor = Exclude<SectorColor, 'gray'>;
@@ -28,6 +30,7 @@ interface Pickup {
   color: BonusColor;
   velocity: THREE.Vector3;
   radius: number;
+  expiresAt?: number;
 }
 
 interface Cloud {
@@ -159,6 +162,15 @@ class YTTowerGame {
   private readonly hud = document.createElement('div');
   private readonly results = document.createElement('div');
   private readonly activeBonus = document.createElement('div');
+  private readonly eventBanner = document.createElement('div');
+  private readonly controls = document.createElement('details');
+  private readonly queue = new EventQueue(loadJson('yttower.events.v1'), events => saveJson('yttower.events.v1', events));
+  private category: RunCategory = 'standard';
+  private goldRequested = false;
+  private lastEvent: StreamEvent | null = null;
+  private lastEventAt = 0;
+  private lastPanelUpdate = 0;
+  private fireworks: { points: THREE.Points; velocities: Float32Array; remaining: number }[] = [];
 
   private floors: FloorData[] = [];
   private stars: Pickup[] = [];
@@ -180,7 +192,7 @@ class YTTowerGame {
   private colorBreaks = 0;
   private bonus: BonusColor | null = null;
   private slowed = false;
-  private bestTime = Number(localStorage.getItem('yttower.bestTime') ?? Number.POSITIVE_INFINITY);
+  private bestTime = Infinity;
 
   constructor() {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -192,7 +204,9 @@ class YTTowerGame {
     this.hud.className = 'hud';
     this.results.className = 'results hidden';
     this.activeBonus.className = 'active-bonus';
-    document.body.append(this.hud, this.results, this.activeBonus);
+    this.eventBanner.className = 'event-banner hidden';
+    document.body.append(this.hud, this.results, this.activeBonus, this.eventBanner);
+    this.setupControls();
 
     this.scene.background = new THREE.Color(0xbfe7ff);
     this.scene.fog = new THREE.Fog(0xbfe7ff, 10, 42);
@@ -232,6 +246,10 @@ class YTTowerGame {
   }
 
   private startRun() {
+    this.queue.endRun();
+    this.category = 'standard';
+    this.goldRequested = false;
+    this.bestTime = readRecord(loadJson(recordKey(this.config, this.category)));
     this.phase = 'playing';
     this.runNumber += 1;
     this.runStart = performance.now();
@@ -247,7 +265,10 @@ class YTTowerGame {
     this.bonus = null;
     this.slowed = false;
     this.results.classList.add('hidden');
-    this.character = CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)];
+    const choice = this.queue.takeCharacter();
+    this.character = CHARACTERS.find(character => character.name === choice?.character)
+      ?? CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)];
+    if (choice) this.announce(choice);
 
     this.clearGroup(this.tower);
     this.clearGroup(this.pickups);
@@ -260,10 +281,113 @@ class YTTowerGame {
     this.buildJumper();
   }
 
+  private setupControls() {
+    if (new URLSearchParams(location.search).get('operator') !== '1') return;
+    this.controls.className = 'operator-controls';
+    this.controls.innerHTML = `
+      <summary>Оператор</summary>
+      <form>
+        <label>Зритель<input name="viewer" maxlength="40" value="YTFunStream" required></label>
+        <label>Событие<select name="kind">${Object.entries(EVENT_NAMES).map(([value, name]) => `<option value="${value}">${name}</option>`).join('')}</select></label>
+        <label class="character-choice hidden">Герой<select name="character">${CHARACTERS.map(character => `<option>${character.name}</option>`).join('')}</select></label>
+        <button type="submit">Запустить</button>
+      </form>
+      <output class="queue-status"></output>
+      <ol class="queue-list"></ol>
+    `;
+    document.body.append(this.controls);
+    const form = this.controls.querySelector('form')!;
+    form.addEventListener('change', () => {
+      const kind = new FormData(form).get('kind');
+      this.controls.querySelector('.character-choice')!.classList.toggle('hidden', kind !== 'character');
+    });
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const data = new FormData(form);
+      this.queue.enqueue({ id: crypto.randomUUID(), kind: data.get('kind') as EventKind,
+        viewer: String(data.get('viewer')), character: String(data.get('character')) });
+      this.updateQueuePanel();
+    });
+    this.updateQueuePanel();
+  }
+
+  private updateQueuePanel() {
+    if (!this.controls.isConnected) return;
+    const waiting = this.queue.events.filter(event => event.status === 'queued');
+    const review = this.queue.events.filter(event => event.status === 'review');
+    this.controls.querySelector('output')!.textContent = `Ожидают: ${waiting.length} · Проверить после сбоя: ${review.length}`;
+    const list = this.controls.querySelector('ol')!;
+    list.replaceChildren();
+    for (const event of [...review, ...waiting].slice(0, 10)) {
+      const item = document.createElement('li');
+      item.textContent = `${EVENT_NAMES[event.kind]} · ${event.viewer}${event.status === 'review' ? ' · Проверить' : ''}`;
+      list.append(item);
+    }
+  }
+
+  private announce(event: StreamEvent) {
+    this.lastEvent = event;
+    this.lastEventAt = performance.now();
+  }
+
+  private executeEvent(event: StreamEvent) {
+    this.announce(event);
+    if (event.kind !== 'fireworks' && event.kind !== 'character') {
+      this.category = 'supported';
+      this.bestTime = readRecord(loadJson(recordKey(this.config, this.category)));
+    }
+    if (event.kind === 'gold') this.goldRequested = true;
+    if (event.kind === 'fireworks') this.createFireworks();
+  }
+
+  private createFireworks() {
+    const positions = new Float32Array(90 * 3);
+    const colors = new Float32Array(90 * 3);
+    const velocities = new Float32Array(90 * 3);
+    for (let i = 0; i < 90; i++) {
+      positions.set([0, this.jumperY + 1, 0], i * 3);
+      const velocity = new THREE.Vector3(Math.random() - 0.5, Math.random(), Math.random() - 0.5).normalize().multiplyScalar(1 + Math.random() * 2);
+      velocities.set(velocity.toArray(), i * 3);
+      colors.set(new THREE.Color(COLOR_HEX[SECTOR_COLORS[i % 4]]).toArray(), i * 3);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 0.07, vertexColors: true, transparent: true, opacity: 1 }));
+    this.scene.add(points);
+    this.fireworks.push({ points, velocities, remaining: 5 });
+  }
+
+  private updateEvents(dt: number) {
+    this.queue.tick(dt, this.phase === 'playing', event => this.executeEvent(event));
+    const active = this.queue.active;
+    const visible = active?.event ?? (performance.now() - this.lastEventAt < 5000 ? this.lastEvent : null);
+    this.eventBanner.classList.toggle('hidden', !visible);
+    if (visible) this.eventBanner.textContent = `${EVENT_NAMES[visible.kind]} · ${visible.viewer}${active ? active.event.kind === 'gold' ? ' · Ближайший прыжок' : ` · ${Math.ceil(active.remaining)} с` : ''}`;
+    if (performance.now() - this.lastPanelUpdate > 500) {
+      this.updateQueuePanel();
+      this.lastPanelUpdate = performance.now();
+    }
+    this.fireworks = this.fireworks.filter(effect => {
+      effect.remaining -= dt;
+      if (effect.remaining <= 0) { this.disposeObject(effect.points); return false; }
+      const positions = effect.points.geometry.getAttribute('position');
+      for (let i = 0; i < positions.count; i++) {
+        effect.velocities[i * 3 + 1] -= dt * 0.6;
+        positions.setXYZ(i, positions.getX(i) + effect.velocities[i * 3] * dt,
+          positions.getY(i) + effect.velocities[i * 3 + 1] * dt,
+          positions.getZ(i) + effect.velocities[i * 3 + 2] * dt);
+      }
+      positions.needsUpdate = true;
+      (effect.points.material as THREE.PointsMaterial).opacity = Math.min(1, effect.remaining);
+      return true;
+    });
+  }
+
   private buildTower() {
     const sectorSize = Math.PI / 2;
-    const grayIndex = Math.floor(Math.random() * 4);
     for (let i = 0; i < this.config.floors; i += 1) {
+      const grayIndex = Math.floor(Math.random() * 4);
       const group = new THREE.Group();
       group.position.y = -i * this.floorSpacing;
       const floorColors: SectorColor[] = shuffle(SECTOR_COLORS).slice(0, 4);
@@ -290,10 +414,36 @@ class YTTowerGame {
       this.tower.add(group);
       this.floors.push({ group, y: group.position.y, colors: floorColors, broken: false });
     }
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, this.config.floors * this.floorSpacing + 4, 24),
+      new THREE.MeshToonMaterial({ color: 0xf5f7fa }));
+    core.position.y = -(this.config.floors - 1) * this.floorSpacing / 2;
+    this.tower.add(core);
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#d92344';
+    ctx.font = 'bold 108px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('YTFunStream', 512, 128);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.MeshBasicMaterial({ map: texture });
+    for (let i = 0; i < this.config.floors; i += 8) {
+      for (const side of [-1, 1]) {
+        const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), material);
+        sign.position.set(0, -i * this.floorSpacing + 0.3, side * 0.34);
+        sign.rotation.y = side < 0 ? Math.PI : 0;
+        this.tower.add(sign);
+      }
+    }
   }
 
   private buildJumper() {
-    this.scene.remove(this.jumper);
+    this.disposeObject(this.jumper);
     this.jumper = new THREE.Group();
 
     const bodyMaterial = new THREE.MeshToonMaterial({ color: this.character.body });
@@ -329,14 +479,16 @@ class YTTowerGame {
 
   private animate() {
     requestAnimationFrame(() => this.animate());
-    const dt = Math.min(this.clock.getDelta(), 0.033);
-    this.update(dt);
+    const elapsed = this.clock.getDelta();
+    const dt = Math.min(elapsed, 0.033);
+    this.update(dt, elapsed);
     this.renderer.render(this.scene, this.camera);
   }
 
-  private update(dt: number) {
+  private update(dt: number, elapsed: number) {
+    this.updateEvents(elapsed);
     if (this.phase === 'playing') {
-      this.tower.rotation.y += this.config.towerRotationSpeed * dt;
+      this.tower.rotation.y += this.config.towerRotationSpeed * (this.queue.active?.event.kind === 'turbo' ? 1.25 : 1) * dt;
       this.updateJumper(dt);
       this.spawnPickups(dt);
       this.updatePickups(dt);
@@ -385,8 +537,6 @@ class YTTowerGame {
         this.colorBreaks += 1;
         this.score += 25;
         this.bonus = null;
-      } else if (this.bonus === 'gold') {
-        this.bonus = null;
       }
       this.popBreakEffect(floor.y, color);
       return;
@@ -395,6 +545,10 @@ class YTTowerGame {
     this.combo = 0;
     this.velocityY = this.config.bounceForce;
     this.jumperY = floor.y + 0.42;
+    if (this.goldRequested) {
+      this.createStar(true);
+      this.goldRequested = false;
+    }
     this.popBounceEffect(floor.y, color);
   }
 
@@ -407,11 +561,11 @@ class YTTowerGame {
 
   private spawnPickups(dt: number) {
     if (Math.random() < this.config.starSpawnRate * dt) this.createStar();
-    if (Math.random() < this.config.cloudSpawnRate * dt) this.createCloud();
+    if (Math.random() < this.config.cloudSpawnRate * (this.queue.active?.event.kind === 'clouds' ? 2 : 1) * dt) this.createCloud();
   }
 
-  private createStar() {
-    const isGold = Math.random() < this.config.goldStarChance;
+  private createStar(targeted = false) {
+    const isGold = targeted || Math.random() < this.config.goldStarChance;
     const color: BonusColor = isGold ? 'gold' : SECTOR_COLORS[Math.floor(Math.random() * SECTOR_COLORS.length)];
     const material = new THREE.MeshToonMaterial({
       color: COLOR_HEX[color],
@@ -423,12 +577,14 @@ class YTTowerGame {
     const group = new THREE.Group();
     group.add(star);
     group.position.set((Math.random() > 0.5 ? -1 : 1) * (2.9 + Math.random() * 1.2), this.jumperY + 1 + Math.random() * 2.6, this.towerRadius + 0.5 + Math.random() * 0.7);
+    if (targeted) group.position.set(0, this.jumperY + Math.min(0.8, this.config.bounceForce ** 2 / (2 * this.config.gravity) * 0.5), this.towerRadius + 0.38);
     this.pickups.add(group);
     this.stars.push({
       group,
       color,
-      velocity: new THREE.Vector3(group.position.x > 0 ? -1.4 : 1.4, -0.2 - Math.random() * 0.25, 0),
+      velocity: targeted ? new THREE.Vector3() : new THREE.Vector3(group.position.x > 0 ? -1.4 : 1.4, -0.2 - Math.random() * 0.25, 0),
       radius: 0.34,
+      expiresAt: targeted ? performance.now() + 2 * this.config.bounceForce / this.config.gravity * 1000 : undefined,
     });
   }
 
@@ -461,12 +617,14 @@ class YTTowerGame {
         this.caughtStars += 1;
         this.score += star.color === 'gold' ? 50 : 15;
         if (star.color === 'gold') this.caughtGoldStars += 1;
-        this.pickups.remove(star.group);
+        if (star.expiresAt !== undefined) this.queue.completeGold();
+        this.disposeObject(star.group);
         return false;
       }
 
-      if (Math.abs(star.group.position.x) > 5 || star.group.position.y < this.jumperY - 4) {
-        this.pickups.remove(star.group);
+      if ((star.expiresAt !== undefined && performance.now() > star.expiresAt) || Math.abs(star.group.position.x) > 5 || star.group.position.y < this.jumperY - 4) {
+        if (star.expiresAt !== undefined) this.queue.completeGold();
+        this.disposeObject(star.group);
         return false;
       }
       return true;
@@ -479,12 +637,12 @@ class YTTowerGame {
 
       if (cloud.group.position.distanceTo(this.jumper.position) < cloud.radius + this.jumperRadius) {
         this.slowed = true;
-        this.clouds.remove(cloud.group);
+        this.disposeObject(cloud.group);
         return false;
       }
 
       if (Math.abs(cloud.group.position.x) > 5 || cloud.group.position.y < this.jumperY - 4) {
-        this.clouds.remove(cloud.group);
+        this.disposeObject(cloud.group);
         return false;
       }
       return true;
@@ -494,10 +652,13 @@ class YTTowerGame {
   private finishRun() {
     this.phase = 'results';
     this.resultStart = performance.now();
+    if (this.goldRequested) this.queue.deferGold();
+    this.queue.endRun();
+    this.goldRequested = false;
     const time = (this.resultStart - this.runStart) / 1000;
     if (time < this.bestTime) {
       this.bestTime = time;
-      localStorage.setItem('yttower.bestTime', String(time));
+      saveJson(recordKey(this.config, this.category), time);
     }
 
     const stats: RunStats = {
@@ -519,6 +680,7 @@ class YTTowerGame {
     this.results.innerHTML = `
       <div class="results-panel">
         <div class="label">Run #${stats.run}</div>
+        <div class="run-category">${CATEGORY_NAMES[this.category]}</div>
         <h1>${stats.time.toFixed(2)}s</h1>
         <div class="result-grid">
           <span>Character</span><strong>${stats.character}</strong>
@@ -530,6 +692,7 @@ class YTTowerGame {
           <span>Color breaks</span><strong>${stats.colorBreaks}</strong>
           <span>Best</span><strong>${Number.isFinite(this.bestTime) ? `${this.bestTime.toFixed(2)}s` : '-'}</strong>
         </div>
+        <div class="result-brand">YTFunStream</div>
       </div>
     `;
     this.results.classList.remove('hidden');
@@ -547,6 +710,7 @@ class YTTowerGame {
         <div><span>BONUS</span><strong>${bonusText}</strong></div>
         <div><span>RUN</span><strong>#${this.runNumber}</strong></div>
       </div>
+      <div class="run-category">${CATEGORY_NAMES[this.category]} · Рекорд: ${Number.isFinite(this.bestTime) ? `${this.bestTime.toFixed(2)} с` : '—'}</div>
     `;
   }
 
@@ -569,7 +733,7 @@ class YTTowerGame {
     ring.position.set(0, y + 0.02, this.towerRadius + 0.12);
     ring.rotation.x = Math.PI / 2;
     this.scene.add(ring);
-    setTimeout(() => this.scene.remove(ring), 180);
+    setTimeout(() => this.disposeObject(ring), 180);
   }
 
   private popBounceEffect(y: number, color: SectorColor) {
@@ -579,12 +743,13 @@ class YTTowerGame {
     );
     burst.position.set(0, y + 0.28, this.towerRadius + 0.3);
     this.scene.add(burst);
-    setTimeout(() => this.scene.remove(burst), 160);
+    setTimeout(() => this.disposeObject(burst), 160);
   }
 
   private updateCamera() {
     const targetY = this.jumperY - 0.3;
-    this.camera.position.lerp(new THREE.Vector3(4.8, targetY + 2.2, 6.7), 0.08);
+    const framing = Math.max(1, 1.1 / this.camera.aspect);
+    this.camera.position.lerp(new THREE.Vector3(4.8 * framing, targetY + 2.2 * framing, 6.7 * framing), 0.08);
     this.camera.lookAt(0, targetY, 0);
   }
 
@@ -595,9 +760,28 @@ class YTTowerGame {
   }
 
   private clearGroup(group: THREE.Group) {
-    while (group.children.length) {
-      group.remove(group.children[0]);
-    }
+    this.disposeObject(group, false);
+    group.clear();
+  }
+
+  private disposeObject(object: THREE.Object3D, remove = true) {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    const textures = new Set<THREE.Texture>();
+    object.traverse(child => {
+      if (child instanceof THREE.Mesh || child instanceof THREE.Points) {
+        geometries.add(child.geometry);
+        for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+          materials.add(material);
+          const map = (material as THREE.MeshBasicMaterial).map;
+          if (map) textures.add(map);
+        }
+      }
+    });
+    geometries.forEach(geometry => geometry.dispose());
+    textures.forEach(texture => texture.dispose());
+    materials.forEach(material => material.dispose());
+    if (remove) object.removeFromParent();
   }
 }
 

@@ -111,6 +111,68 @@ canvas {
   display: none;
 }
 
+.run-category {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.result-brand {
+  margin-top: 18px;
+  color: #d92344;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.event-banner {
+  position: fixed;
+  bottom: 24px;
+  left: 18px;
+  max-width: min(560px, calc(100vw - 100px));
+  padding: 10px 14px;
+  color: #111827;
+  background: rgba(255, 255, 255, 0.92);
+  border-left: 4px solid #d92344;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.operator-controls {
+  position: fixed;
+  right: 18px;
+  top: 110px;
+  width: min(280px, calc(100vw - 36px));
+  padding: 12px;
+  border: 1px solid #ccd6df;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #111827;
+  font-size: 13px;
+  max-height: calc(100dvh - 210px);
+  overflow: auto;
+}
+
+.operator-controls summary { cursor: pointer; font-weight: 700; }
+.operator-controls form { display: grid; gap: 10px; margin-top: 12px; }
+.operator-controls label { display: grid; gap: 4px; }
+.operator-controls label.hidden { display: none; }
+.operator-controls input, .operator-controls select, .operator-controls button {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid #b8c8d3;
+  border-radius: 4px;
+  padding: 6px;
+  font: inherit;
+  background: white;
+  color: #111827;
+}
+.operator-controls button { background: #176844; color: white; cursor: pointer; }
+.operator-controls output { display: block; margin-top: 12px; }
+.operator-controls ol { padding-left: 20px; margin-bottom: 0; }
+.operator-controls li { margin-top: 8px; overflow-wrap: anywhere; }
+
 @media (max-width: 760px) {
   .hud {
     top: 10px;
@@ -130,6 +192,8 @@ canvas {
   .hud strong {
     font-size: 16px;
   }
+
+  .operator-controls { top: 154px; }
 
   .results h1 {
     font-size: 44px;

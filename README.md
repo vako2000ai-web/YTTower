@@ -18,6 +18,8 @@ YTTower is an autonomous browser game for a YouTube stream. A cartoon jumper fal
 
 ## Setup
 
+Use Node.js 22.6+ (Node.js 24 recommended).
+
 ```bash
 npm install
 npm run dev
@@ -29,6 +31,44 @@ Production build:
 npm run build
 npm run preview
 ```
+
+Queue and record tests:
+
+```bash
+npm test
+```
+
+## Stream Events (Operator Preview)
+
+Open `/?operator=1` to display the operator panel. It can queue a gold star,
+30 seconds of doubled cloud frequency, 20 seconds of 25% faster rotation,
+a character for the next available run, or five seconds of fireworks.
+The ordinary streaming URL hides these controls.
+
+This is a local preview, not a payment integration or an authenticated admin
+panel. No payments are accepted. A future server must verify provider callbacks
+before submitting events; an `operator` URL flag is not authentication.
+
+Mechanics execute in order, while fireworks can run alongside them. Matching
+cloud/turbo events extend the active effect up to 60 seconds without overtaking
+other mechanics. Each queued gold event waits for its own star to be collected
+or expire. Effects reset on finish; events waiting during results remain queued.
+If a run finishes without a bounce, an unspawned requested gold star stays queued.
+Character choices are consumed one per new run.
+
+The queue is persisted in this browser's LocalStorage. Interrupted running
+events are marked for review instead of being replayed. This is not server-side
+durability or a shared queue across browsers. Clearing browser data clears the
+queue and records. Storage failure does not stop the game.
+
+Records are separate for standard and supported runs and every game-parameter
+configuration. Mechanics events mark a run as supported; cosmetic fireworks
+and character selection do not. The old unqualified record is ignored because
+its floor count and configuration cannot be established.
+
+The tower and results use a typographic YTFunStream logo. Sponsor scheduling,
+advertiser assets, payment callbacks, seasons, and video clipping are not yet
+implemented.
 
 ## URL Parameters
 
