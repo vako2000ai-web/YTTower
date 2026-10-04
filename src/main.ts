@@ -491,6 +491,7 @@ class YTTowerGame {
     this.updateEvents(elapsed);
     if (this.phase === 'playing') {
       this.tower.rotation.y += this.config.towerRotationSpeed * (this.queue.active?.event.kind === 'turbo' ? 1.25 : 1) * dt;
+      this.updateFloors(dt);
       this.updateJumper(dt);
       this.spawnPickups(dt);
       this.updatePickups(dt);
@@ -499,9 +500,25 @@ class YTTowerGame {
       if (this.brokenFloors >= this.config.floors) {
         this.finishRun();
       }
-    } else if (performance.now() - this.resultStart > 5000) {
-      this.startRun();
+    } else {
+      // Complete the last celebratory jump while the results are displayed.
+      this.velocityY -= this.config.gravity * dt;
+      this.jumperY = Math.max(0.42, this.jumperY + this.velocityY * dt);
+      if (this.jumperY === 0.42) this.velocityY = 0;
+      this.jumper.position.y = this.jumperY;
+      if (performance.now() - this.resultStart > 5000) this.startRun();
     }
+  }
+
+  private updateFloors(dt: number) {
+    const follow = 1 - Math.exp(-12 * dt);
+    this.floors.forEach((floor, index) => {
+      if (floor.broken) return;
+      const target = -(index - this.brokenFloors) * this.floorSpacing;
+      floor.y = THREE.MathUtils.lerp(floor.y, target, follow);
+      if (Math.abs(floor.y - target) < 0.001) floor.y = target;
+      floor.group.position.y = floor.y;
+    });
   }
 
   private updateJumper(dt: number) {
@@ -539,17 +556,22 @@ class YTTowerGame {
         this.bonus = null;
       }
       this.popBreakEffect(floor.y, color);
+      this.launchJumper(floor.y);
       return;
     }
 
     this.combo = 0;
+    this.launchJumper(floor.y);
+    this.popBounceEffect(floor.y, color);
+  }
+
+  private launchJumper(floorY: number) {
     this.velocityY = this.config.bounceForce;
-    this.jumperY = floor.y + 0.42;
-    if (this.goldRequested) {
+    this.jumperY = floorY + 0.42;
+    if (this.goldRequested && this.brokenFloors < this.config.floors) {
       this.createStar(true);
       this.goldRequested = false;
     }
-    this.popBounceEffect(floor.y, color);
   }
 
   private getContactColor(floor: FloorData): SectorColor {
@@ -747,33 +769,13 @@ class YTTowerGame {
   }
 
   private frameTower() {
-    // Fit the entire run into one fixed view, including the highest bounce.
-    // Only a new run or a viewport resize may reposition the camera.
-    const bottom = -(this.config.floors - 1) * this.floorSpacing - 2.3;
-    const top = Math.max(2.5, 1.1 + this.config.bounceForce ** 2 / (2 * Math.max(0.1, this.config.gravity)));
-    const center = new THREE.Vector3(0, (bottom + top) / 2, 0);
-    const direction = new THREE.Vector3(4.8, 2.2, 6.7).normalize();
-    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), direction).normalize();
-    const up = new THREE.Vector3().crossVectors(direction, right);
-    const vertical = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    const horizontal = vertical * this.camera.aspect;
-    const margin = this.camera.aspect < 1 ? 0.58 : 0.76;
-    const radius = this.towerRadius + 0.85;
-    let distance = 0;
-    for (const x of [-radius, radius]) {
-      for (const y of [bottom, top]) {
-        for (const z of [-radius, radius]) {
-          const corner = new THREE.Vector3(x, y, z).sub(center);
-          const depth = corner.dot(direction);
-          distance = Math.max(distance, depth + Math.abs(corner.dot(right)) / (horizontal * 0.9),
-            depth + Math.abs(corner.dot(up)) / (vertical * margin));
-        }
-      }
-    }
-    this.camera.position.copy(center).addScaledVector(direction, distance);
-    this.camera.far = Math.max(160, distance + top - bottom + 20);
+    // A close-up that does not depend on floor count or progress.
+    const bounceHeight = this.config.bounceForce ** 2 / (2 * Math.max(0.1, this.config.gravity));
+    const framing = Math.max(1, 1.1 / this.camera.aspect, bounceHeight / 3.5);
+    this.camera.position.set(4.8 * framing, 0.8 + 2.2 * framing, 6.7 * framing);
+    this.camera.far = Math.max(160, this.config.floors * this.floorSpacing + 40);
     this.camera.updateProjectionMatrix();
-    this.camera.lookAt(center);
+    this.camera.lookAt(0, 0.8, 0);
   }
 
   private resize() {

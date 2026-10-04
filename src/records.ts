@@ -5,7 +5,7 @@ export const CATEGORY_NAMES: Record<RunCategory, string> = {
 
 export function recordKey(config: object, category: RunCategory) {
   const entries = Object.entries(config).sort(([a], [b]) => a.localeCompare(b));
-  return `yttower.record.v2:${JSON.stringify(entries)}:${category}`;
+  return `yttower.record.v3:${JSON.stringify(entries)}:${category}`;
 }
 
 export function loadJson(key: string): unknown {

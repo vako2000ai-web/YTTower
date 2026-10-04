@@ -15,9 +15,11 @@ YTTower is an autonomous browser game for a YouTube stream. A cartoon jumper fal
 - HUD with time, floors, score, combo, bonus, and run number.
 - Result board for 5 seconds after all floors are broken.
 - Automatic restart after each run.
-- Camera remains fixed for the entire run, framing the whole tower and the
-  jumper's highest bounce. Breaking floors does not pan or zoom the view.
-  The view is recalculated only on a new run or a window resize.
+- Camera stays fixed in a close-up throughout the run, independent of floor
+  count. The tower's base stays in place and rotates; after each break, the
+  jumper bounces upward and remaining floors slide upward to the active position.
+  Collisions use the floors' actual animated positions.
+- Combo counts consecutive successful breaks, resetting on an unbreakable contact.
 
 ## Setup
 
@@ -68,6 +70,8 @@ Records are separate for standard and supported runs and every game-parameter
 configuration. Mechanics events mark a run as supported; cosmetic fireworks
 and character selection do not. The old unqualified record is ignored because
 its floor count and configuration cannot be established.
+Records from the former falling-through-floors mechanic are also kept separate
+from the new bounce-and-lift mechanic (record storage version 3).
 
 The tower and results use a typographic YTFunStream logo. Sponsor scheduling,
 advertiser assets, payment callbacks, seasons, and video clipping are not yet
