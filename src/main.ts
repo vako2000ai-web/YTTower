@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import './styles.css';
+import { BackgroundMusic } from './music';
 import { EventQueue, EVENT_NAMES, type StreamEvent, type EventKind } from './events';
 import { CATEGORY_NAMES, recordKey, loadJson, saveJson, readRecord, type RunCategory } from './records';
 
@@ -151,7 +152,7 @@ class YTTowerGame {
   private readonly app = document.querySelector<HTMLDivElement>('#app')!;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 160);
-  private readonly renderer = new THREE.WebGLRenderer({ antialias: true });
+  private readonly renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   private readonly tower = new THREE.Group();
   private readonly pickups = new THREE.Group();
   private readonly clouds = new THREE.Group();
@@ -208,12 +209,12 @@ class YTTowerGame {
     document.body.append(this.hud, this.results, this.activeBonus, this.eventBanner);
     this.setupControls();
 
-    this.scene.background = new THREE.Color(0xbfe7ff);
-    this.scene.fog = new THREE.Fog(0xbfe7ff, 10, 42);
+    this.renderer.setClearColor(0x000000, 0);
     this.scene.add(this.tower, this.pickups, this.clouds);
 
     this.setupLights();
     this.setupSkyline();
+    new BackgroundMusic();
     window.addEventListener('resize', () => this.resize());
     this.startRun();
     this.animate();
@@ -228,21 +229,20 @@ class YTTowerGame {
   }
 
   private setupSkyline() {
-    const base = new THREE.Group();
-    for (let i = 0; i < 32; i += 1) {
-      const width = 0.35 + Math.random() * 0.75;
-      const height = 1 + Math.random() * 4.8;
-      const box = new THREE.Mesh(
-        new THREE.BoxGeometry(width, height, width),
-        new THREE.MeshLambertMaterial({ color: i % 2 ? 0x80b7ce : 0x6aa7c2 }),
-      );
-      const angle = (i / 32) * Math.PI * 2;
-      const radius = 10 + Math.random() * 7;
-      box.position.set(Math.cos(angle) * radius, -height * 0.5 - 2.5, Math.sin(angle) * radius);
-      box.rotation.y = -angle;
-      base.add(box);
-    }
-    this.scene.add(base);
+    const backdrop = document.createElement('div');
+    backdrop.className = 'city-background';
+    const photo = document.createElement('img');
+    photo.src = `${import.meta.env.BASE_URL}assets/singapore.jpg`;
+    photo.alt = '';
+    backdrop.append(photo);
+    document.body.prepend(backdrop);
+    const credit = document.createElement('a');
+    credit.className = 'photo-credit';
+    credit.href = 'https://unsplash.com/s/photos/marina-bay-sands';
+    credit.target = '_blank';
+    credit.rel = 'noopener noreferrer';
+    credit.textContent = 'SINGAPORE · MARINA BAY / UNSPLASH';
+    document.body.append(credit);
   }
 
   private startRun() {

@@ -9,7 +9,7 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: #bfe7ff;
+  background: transparent;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -18,12 +18,25 @@ canvas {
   display: block;
 }
 
+body { background: #173c48; }
+#app { position: relative; }
+.city-background { position: fixed; inset: 0; pointer-events: none; }
+.city-background img { width: 100%; height: 100%; object-fit: cover; object-position: center 45%; }
+.city-background::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(7, 22, 39, 0.12), transparent 35%, rgba(5, 27, 39, 0.25));
+}
+.photo-credit { position: fixed; left: 18px; bottom: 12px; color: #fff; font-size: 9px; letter-spacing: 1px; text-decoration: none; text-shadow: 0 1px 4px #000; }
+.music-controls { position: fixed; right: 18px; bottom: 18px; width: 185px; padding: 10px 12px; border-radius: 10px; background: rgba(12, 29, 44, 0.88); color: white; backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.25); }
+.music-controls button { border: 0; background: none; color: inherit; cursor: pointer; font: inherit; font-size: 13px; padding: 4px 0 8px; width: 100%; }
+.music-controls input { width: 100%; accent-color: #ffcc66; }
+
 .hud {
   position: fixed;
   top: 18px;
   left: 18px;
   right: 18px;
-  color: #0f172a;
+  color: #ffffff;
   pointer-events: none;
 }
 
@@ -39,14 +52,15 @@ canvas {
   padding: 10px 12px;
   border: 2px solid rgba(15, 23, 42, 0.12);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.74);
+  background: rgba(12, 29, 44, 0.78);
+  backdrop-filter: blur(12px);
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
 }
 
+.hud span { color: #d2e5ed; }
 .hud span,
 .label {
   display: block;
-  color: #475569;
   font-size: 11px;
   font-weight: 900;
   line-height: 1;
@@ -126,9 +140,9 @@ canvas {
 
 .event-banner {
   position: fixed;
-  bottom: 24px;
+  bottom: 40px;
   left: 18px;
-  max-width: min(560px, calc(100vw - 100px));
+  max-width: min(560px, calc(100vw - 235px));
   padding: 10px 14px;
   color: #111827;
   background: rgba(255, 255, 255, 0.92);
@@ -173,6 +187,8 @@ canvas {
 .operator-controls ol { padding-left: 20px; margin-bottom: 0; }
 .operator-controls li { margin-top: 8px; overflow-wrap: anywhere; }
 
+.active-bonus { bottom: 110px; }
+
 @media (max-width: 760px) {
   .hud {
     top: 10px;
@@ -194,6 +210,7 @@ canvas {
   }
 
   .operator-controls { top: 154px; }
+  .event-banner { bottom: 105px; max-width: calc(100vw - 100px); }
 
   .results h1 {
     font-size: 44px;

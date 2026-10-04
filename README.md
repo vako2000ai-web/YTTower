@@ -88,4 +88,13 @@ Supported parameters:
 
 ## Streaming
 
+The game now uses a bundled Singapore / Marina Bay Sands photograph behind the
+transparent 3D scene. It works without an external image request at runtime.
+Photo source and license are in `public/assets/CREDITS.md`.
+
+Click **Включить музыку** to start the original upbeat procedural background
+music. Browsers require a user gesture for sound; the game still starts without
+one. The volume slider is saved locally, and music continues across runs.
+For streaming, enable music once and make sure OBS captures the browser's audio.
+
 Open the app in a browser and capture the window or tab in OBS. The game starts automatically and does not require input.
