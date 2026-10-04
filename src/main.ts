@@ -70,6 +70,14 @@ const COLOR_HEX: Record<SectorColor | 'gold', number> = {
   violet: 0xa855f7,
   gold: 0xfbbf24,
 };
+const COLOR_NAMES: Record<SectorColor | 'gold', string> = {
+  gray: 'СЕРЫЙ', red: 'КРАСНЫЙ', blue: 'СИНИЙ', green: 'ЗЕЛЁНЫЙ', violet: 'ФИОЛЕТОВЫЙ', gold: 'ЗОЛОТОЙ: любой цвет',
+};
+
+function formatTime(seconds: number) {
+  const hundredths = Math.floor(seconds * 100);
+  return `${String(Math.floor(hundredths / 6000)).padStart(2, '0')}:${String(Math.floor(hundredths / 100) % 60).padStart(2, '0')}.${String(hundredths % 100).padStart(2, '0')}`;
+}
 
 const CHARACTERS: Character[] = [
   { name: 'Space Courier', body: 0xf8fafc, accent: 0xf97316, head: 0xffd6a5 },
@@ -94,35 +102,41 @@ function readConfig(): Config {
   return {
     floors: Math.max(1, Math.floor(numberParam('floors', numberParam('N', 100)))),
     towerRotationSpeed: numberParam('speed', 1.15),
-    starSpawnRate: numberParam('stars', 0.85),
+    starSpawnRate: numberParam('stars', 1.8),
     cloudSpawnRate: numberParam('clouds', 0.28),
     goldStarChance: numberParam('gold', 0.12),
-    gravity: numberParam('gravity', 12.5),
-    bounceForce: numberParam('bounce', 8.9),
+    gravity: Math.max(0.1, numberParam('gravity', 18)),
+    bounceForce: Math.max(0.1, numberParam('bounce', 5.8)),
   };
 }
 
 function makeSectorGeometry(innerRadius: number, outerRadius: number, startAngle: number, endAngle: number) {
-  const segments = 18;
-  const vertices: number[] = [];
-  const indices: number[] = [];
-
-  for (let i = 0; i <= segments; i += 1) {
-    const t = startAngle + (endAngle - startAngle) * (i / segments);
-    vertices.push(Math.cos(t) * innerRadius, 0, Math.sin(t) * innerRadius);
-    vertices.push(Math.cos(t) * outerRadius, 0, Math.sin(t) * outerRadius);
-  }
-
-  for (let i = 0; i < segments; i += 1) {
-    const a = i * 2;
-    indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
+  const shape = new THREE.Shape();
+  shape.absarc(0, 0, outerRadius, startAngle, endAngle, false);
+  shape.lineTo(Math.cos(endAngle) * innerRadius, Math.sin(endAngle) * innerRadius);
+  shape.absarc(0, 0, innerRadius, endAngle, startAngle, true);
+  shape.closePath();
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.13, bevelEnabled: false, curveSegments: 24, steps: 1 });
+  geometry.rotateX(Math.PI / 2);
   return geometry;
+}
+
+function sectorTexture(color: SectorColor) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = `#${COLOR_HEX[color].toString(16).padStart(6, '0')}`;
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.strokeStyle = color === 'gray' ? 'rgba(35,47,66,0.32)' : 'rgba(255,255,255,0.14)';
+  ctx.lineWidth = color === 'gray' ? 5 : 14;
+  const spacing = color === 'gray' ? 16 : 64;
+  for (let x = -128; x < 256; x += spacing) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 128, 128); ctx.stroke();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
 }
 
 function makeStarGeometry(radius = 0.22) {
@@ -158,12 +172,17 @@ class YTTowerGame {
   private readonly pickups = new THREE.Group();
   private readonly clouds = new THREE.Group();
   private readonly clock = new THREE.Clock();
-  private readonly floorSpacing = 0.46;
+  private readonly floorSpacing = 0.32;
   private readonly towerRadius = 1.55;
+  private readonly jumperZ = this.towerRadius * 0.78;
   private readonly jumperRadius = 0.26;
   private readonly hud = document.createElement('div');
   private readonly results = document.createElement('div');
-  private readonly activeBonus = document.createElement('div');
+  private halo: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial> | null = null;
+  private arms: THREE.Group[] = [];
+  private readonly shadow = new THREE.Mesh(new THREE.CircleGeometry(0.22, 24), new THREE.MeshBasicMaterial({ color: 0x142238, transparent: true, opacity: 0.3, depthWrite: false }));
+  private bursts: { group: THREE.Group; velocities: THREE.Vector3[]; life: number }[] = [];
+  private scoreLabels: { sprite: THREE.Sprite; life: number }[] = [];
   private readonly eventBanner = document.createElement('div');
   private readonly controls = document.createElement('details');
   private readonly queue = new EventQueue(loadJson('yttower.events.v1'), events => saveJson('yttower.events.v1', events));
@@ -205,13 +224,14 @@ class YTTowerGame {
 
     this.hud.className = 'hud';
     this.results.className = 'results hidden';
-    this.activeBonus.className = 'active-bonus';
     this.eventBanner.className = 'event-banner hidden';
-    document.body.append(this.hud, this.results, this.activeBonus, this.eventBanner);
+    document.body.append(this.hud, this.results, this.eventBanner);
     this.setupControls();
 
     this.renderer.setClearColor(0x000000, 0);
     this.scene.add(this.tower, this.pickups, this.clouds);
+    this.shadow.rotation.x = -Math.PI / 2;
+    this.scene.add(this.shadow);
 
     this.setupLights();
     this.setupSkyline();
@@ -246,6 +266,12 @@ class YTTowerGame {
   }
 
   private startRun() {
+    for (const burst of this.bursts) this.disposeObject(burst.group);
+    for (const label of this.scoreLabels) this.disposeObject(label.sprite);
+    this.bursts = [];
+    this.scoreLabels = [];
+    this.tower.name = 'tower';
+    this.jumper.name = 'jumper';
     this.queue.endRun();
     this.category = 'standard';
     this.goldRequested = false;
@@ -279,7 +305,8 @@ class YTTowerGame {
 
     this.buildTower();
     this.buildJumper();
-    this.jumper.position.set(0, this.jumperY, this.towerRadius + 0.38);
+    this.jumper.name = 'jumper';
+    this.jumper.position.set(0, this.jumperY, this.jumperZ);
     this.frameTower();
   }
 
@@ -388,6 +415,10 @@ class YTTowerGame {
 
   private buildTower() {
     const sectorSize = Math.PI / 2;
+    const materials = Object.fromEntries((['gray', ...SECTOR_COLORS] as SectorColor[]).map(color => [color, [
+      new THREE.MeshToonMaterial({ map: sectorTexture(color) }),
+      new THREE.MeshToonMaterial({ color: new THREE.Color(COLOR_HEX[color]).multiplyScalar(0.72) }),
+    ]])) as unknown as Record<SectorColor, THREE.Material[]>;
     for (let i = 0; i < this.config.floors; i += 1) {
       const grayIndex = Math.floor(Math.random() * 4);
       const group = new THREE.Group();
@@ -398,35 +429,28 @@ class YTTowerGame {
       for (let s = 0; s < 4; s += 1) {
         const color = floorColors[s];
         const sector = new THREE.Mesh(
-          makeSectorGeometry(0.32, this.towerRadius, s * sectorSize, (s + 1) * sectorSize - 0.03),
-          new THREE.MeshToonMaterial({ color: COLOR_HEX[color], side: THREE.DoubleSide }),
+          makeSectorGeometry(0.5, this.towerRadius, s * sectorSize, (s + 1) * sectorSize - 0.014),
+          materials[color],
         );
         sector.castShadow = true;
         sector.receiveShadow = true;
         group.add(sector);
       }
 
-      const rim = new THREE.Mesh(
-        new THREE.TorusGeometry(this.towerRadius, 0.015, 8, 80),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.65 }),
-      );
-      rim.rotation.x = Math.PI / 2;
-      group.add(rim);
-
       this.tower.add(group);
       this.floors.push({ group, y: group.position.y, colors: floorColors, broken: false });
     }
-    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, this.config.floors * this.floorSpacing + 4, 24),
-      new THREE.MeshToonMaterial({ color: 0xf5f7fa }));
-    core.position.y = -(this.config.floors - 1) * this.floorSpacing / 2;
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, Math.max(60, this.config.floors * this.floorSpacing + 15), 40),
+      new THREE.MeshToonMaterial({ color: 0x17213a }));
+    core.position.y = -(this.config.floors - 1) * this.floorSpacing / 2 + 6;
     this.tower.add(core);
     const canvas = document.createElement('canvas');
     canvas.width = 1024;
     canvas.height = 256;
     const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#17213a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#d92344';
+    ctx.fillStyle = '#e9f2ff';
     ctx.font = 'bold 108px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -434,46 +458,80 @@ class YTTowerGame {
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     const material = new THREE.MeshBasicMaterial({ map: texture });
-    for (let i = 0; i < this.config.floors; i += 8) {
-      for (const side of [-1, 1]) {
-        const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), material);
-        sign.position.set(0, -i * this.floorSpacing + 0.3, side * 0.34);
+    for (const side of [-1, 1]) {
+        const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.2), material);
+        sign.position.set(0, 2.75, side * 0.485);
         sign.rotation.y = side < 0 ? Math.PI : 0;
         this.tower.add(sign);
-      }
     }
   }
 
   private buildJumper() {
     this.disposeObject(this.jumper);
     this.jumper = new THREE.Group();
+    this.arms = [];
 
     const bodyMaterial = new THREE.MeshToonMaterial({ color: this.character.body });
     const accentMaterial = new THREE.MeshToonMaterial({ color: this.character.accent });
     const skinMaterial = new THREE.MeshToonMaterial({ color: this.character.head });
     const blackMaterial = new THREE.MeshToonMaterial({ color: 0x111827 });
 
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.18, 0.34, 6, 12), bodyMaterial);
-    body.position.y = 0.08;
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.14, 0.20, 8, 16), bodyMaterial);
+    body.position.y = 0.04;
     body.castShadow = true;
 
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 18, 18), skinMaterial);
-    head.position.y = 0.48;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.20, 24, 24), skinMaterial);
+    head.position.y = 0.44;
     head.castShadow = true;
 
-    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.185, 0.018, 8, 24), accentMaterial);
-    belt.position.y = 0.13;
+    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.145, 0.012, 8, 24), accentMaterial);
+    belt.position.y = 0.0;
     belt.rotation.x = Math.PI / 2;
 
     const footA = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), accentMaterial);
     const footB = footA.clone();
-    footA.position.set(-0.11, -0.25, 0.03);
-    footB.position.set(0.11, -0.25, 0.03);
+    footA.scale.set(0.85, 0.7, 1.2);
+    footB.scale.copy(footA.scale);
+    footA.position.set(-0.08, -0.29, 0.06);
+    footB.position.set(0.08, -0.29, 0.06);
 
     const eyeA = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 8), blackMaterial);
     const eyeB = eyeA.clone();
-    eyeA.position.set(-0.065, 0.52, 0.16);
-    eyeB.position.set(0.065, 0.52, 0.16);
+    eyeA.position.set(-0.065, 0.47, 0.185);
+    eyeB.position.set(0.065, 0.47, 0.185);
+
+    const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.008, 8, 16, Math.PI), blackMaterial);
+    mouth.position.set(0, 0.405, 0.196);
+    mouth.rotation.z = Math.PI;
+    const badge = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.075, 0.015), accentMaterial);
+    badge.position.set(0, 0.065, 0.145);
+    this.jumper.add(mouth, badge);
+    for (const side of [-1, 1]) {
+      const arm = new THREE.Group();
+      arm.position.set(side * 0.17, 0.19, 0);
+      const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.16, 6, 12), bodyMaterial);
+      sleeve.position.y = -0.12;
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 12), skinMaterial);
+      hand.position.y = -0.24;
+      arm.add(sleeve, hand);
+      this.arms.push(arm);
+      const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.08, 6, 12), bodyMaterial);
+      leg.position.set(side * 0.08, -0.2, 0);
+      this.jumper.add(arm, leg);
+    }
+    if (['Space Courier', 'Alien Tourist'].includes(this.character.name)) {
+      const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.25, 24, 24),
+        new THREE.MeshPhongMaterial({ color: 0xa9e8ff, transparent: true, opacity: 0.2, shininess: 100, depthWrite: false }));
+      helmet.position.y = 0.44;
+      const seal = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.017, 8, 32), accentMaterial);
+      seal.position.set(0, 0.44, 0.11);
+      this.jumper.add(helmet, seal);
+    }
+    this.halo = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.025, 8, 40),
+      new THREE.MeshBasicMaterial({ color: COLOR_HEX.gold }));
+    this.halo.rotation.x = Math.PI / 2;
+    this.halo.visible = false;
+    this.jumper.add(this.halo);
 
     this.jumper.add(body, head, belt, footA, footB, eyeA, eyeB);
     this.scene.add(this.jumper);
@@ -489,6 +547,7 @@ class YTTowerGame {
 
   private update(dt: number, elapsed: number) {
     this.updateEvents(elapsed);
+    this.updateEffects(dt);
     if (this.phase === 'playing') {
       this.tower.rotation.y += this.config.towerRotationSpeed * (this.queue.active?.event.kind === 'turbo' ? 1.25 : 1) * dt;
       this.updateFloors(dt);
@@ -525,12 +584,21 @@ class YTTowerGame {
     const fallMultiplier = this.velocityY < 0 && this.slowed ? 0.5 : 1;
     this.velocityY -= this.config.gravity * fallMultiplier * dt;
     this.jumperY += this.velocityY * dt * fallMultiplier;
-    this.jumper.position.set(0, this.jumperY, this.towerRadius + 0.38);
-    this.jumper.rotation.y = Math.sin(performance.now() * 0.004) * 0.16;
+    this.jumper.position.set(0, this.jumperY, this.jumperZ);
+    this.jumper.rotation.y = Math.sin(performance.now() * 0.004) * 0.07;
+    this.arms.forEach((arm, index) => {
+      arm.rotation.z = (index === 0 ? -1 : 1) * (this.velocityY > 0 ? 1.3 : 0.3);
+    });
     this.jumper.scale.y = THREE.MathUtils.lerp(this.jumper.scale.y, this.velocityY > 0 ? 1.06 : 0.96, 0.12);
     this.jumper.scale.x = THREE.MathUtils.lerp(this.jumper.scale.x, this.velocityY > 0 ? 0.96 : 1.04, 0.12);
     this.jumper.scale.z = this.jumper.scale.x;
     this.checkFloorCollision();
+    this.jumper.position.y = this.jumperY;
+    const surface = this.floors.find(floor => !floor.broken)?.y ?? 0;
+    this.shadow.position.set(0, surface + 0.015, this.jumperZ);
+    const height = Math.max(0, this.jumperY - surface);
+    this.shadow.scale.setScalar(1 + height * 0.12);
+    this.shadow.material.opacity = Math.max(0.07, 0.35 - height * 0.16);
     this.updateBonusBadge();
   }
 
@@ -544,6 +612,7 @@ class YTTowerGame {
     const canBreak = color === 'gray' || this.bonus === color || this.bonus === 'gold';
 
     if (canBreak) {
+      const previousScore = this.score;
       floor.broken = true;
       floor.group.visible = false;
       this.brokenFloors += 1;
@@ -556,6 +625,7 @@ class YTTowerGame {
         this.bonus = null;
       }
       this.popBreakEffect(floor.y, color);
+      this.showScoreLabel(`+${this.score - previousScore}`, floor.y);
       this.launchJumper(floor.y);
       return;
     }
@@ -576,7 +646,7 @@ class YTTowerGame {
 
   private getContactColor(floor: FloorData): SectorColor {
     const worldAngle = Math.PI / 2;
-    const localAngle = THREE.MathUtils.euclideanModulo(worldAngle - this.tower.rotation.y, Math.PI * 2);
+    const localAngle = THREE.MathUtils.euclideanModulo(worldAngle + this.tower.rotation.y, Math.PI * 2);
     const sector = Math.floor(localAngle / (Math.PI / 2)) % 4;
     return floor.colors[sector];
   }
@@ -598,13 +668,15 @@ class YTTowerGame {
     const star = new THREE.Mesh(makeStarGeometry(color === 'gold' ? 0.26 : 0.21), material);
     const group = new THREE.Group();
     group.add(star);
-    group.position.set((Math.random() > 0.5 ? -1 : 1) * (2.9 + Math.random() * 1.2), this.jumperY + 1 + Math.random() * 2.6, this.towerRadius + 0.5 + Math.random() * 0.7);
-    if (targeted) group.position.set(0, this.jumperY + Math.min(0.8, this.config.bounceForce ** 2 / (2 * this.config.gravity) * 0.5), this.towerRadius + 0.38);
+    const outline = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.018, 8, 32), new THREE.MeshBasicMaterial({ color: COLOR_HEX[color] }));
+    group.add(outline);
+    group.position.set((Math.random() > 0.5 ? -1 : 1) * (2.7 + Math.random() * 0.5), 0.55 + Math.random() * 0.95, this.jumperZ + Math.random() * 0.15);
+    if (targeted) group.position.set(0, this.jumperY + Math.min(0.5, this.config.bounceForce ** 2 / (2 * this.config.gravity) * 0.5), this.jumperZ);
     this.pickups.add(group);
     this.stars.push({
       group,
       color,
-      velocity: targeted ? new THREE.Vector3() : new THREE.Vector3(group.position.x > 0 ? -1.4 : 1.4, -0.2 - Math.random() * 0.25, 0),
+      velocity: targeted ? new THREE.Vector3() : new THREE.Vector3(group.position.x > 0 ? -1.7 : 1.7, -0.05, 0),
       radius: 0.34,
       expiresAt: targeted ? performance.now() + 2 * this.config.bounceForce / this.config.gravity * 1000 : undefined,
     });
@@ -618,7 +690,7 @@ class YTTowerGame {
       puff.position.set((i - 2) * 0.17, Math.random() * 0.1, Math.random() * 0.08);
       cloud.add(puff);
     }
-    cloud.position.set((Math.random() > 0.5 ? -1 : 1) * (3.1 + Math.random() * 1.4), this.jumperY + 0.4 + Math.random() * 2.2, this.towerRadius + 0.45);
+    cloud.position.set((Math.random() > 0.5 ? -1 : 1) * (3.1 + Math.random() * 1.4), 0.6 + Math.random() * 1.2, this.jumperZ + 0.1);
     this.clouds.add(cloud);
     this.cloudItems.push({
       group: cloud,
@@ -722,40 +794,72 @@ class YTTowerGame {
 
   private updateHud() {
     const time = (performance.now() - this.runStart) / 1000;
-    const bonusText = this.bonus ? this.bonus.toUpperCase() : 'NONE';
     this.hud.innerHTML = `
-      <div class="hud-row">
-        <div><span>TIME</span><strong>${time.toFixed(2)}</strong></div>
-        <div><span>FLOORS</span><strong>${this.brokenFloors}/${this.config.floors}</strong></div>
-        <div><span>SCORE</span><strong>${this.score}</strong></div>
-        <div><span>COMBO</span><strong>${this.combo}</strong></div>
-        <div><span>BONUS</span><strong>${bonusText}</strong></div>
-        <div><span>RUN</span><strong>#${this.runNumber}</strong></div>
+      <div class="hud-top">
+        <div><span>ЭТАЖИ</span><strong class="floor-value">${this.brokenFloors}/${this.config.floors}</strong></div>
+        <div class="timer"><span>ВРЕМЯ ЗАБЕГА</span><strong>${formatTime(time)}</strong></div>
+        <div class="score"><span>ОЧКИ</span><strong>${this.score}</strong></div>
       </div>
-      <div class="run-category">${CATEGORY_NAMES[this.category]} · Рекорд: ${Number.isFinite(this.bestTime) ? `${this.bestTime.toFixed(2)} с` : '—'}</div>
+      <div class="hud-side hud-left"><div>Забег #${this.runNumber}</div><div>Рекорд: ${Number.isFinite(this.bestTime) ? formatTime(this.bestTime) : '—'}</div><div>★ Звёзды: ${this.caughtStars}</div><div>${CATEGORY_NAMES[this.category]}</div></div>
+      <div class="hud-side hud-right"><div class="combo">КОМБО ×${this.combo}</div>${this.bonus ? `<div style="border-color:#${COLOR_HEX[this.bonus].toString(16).padStart(6, '0')}">★ ${COLOR_NAMES[this.bonus]}</div>` : ''}</div>
     `;
   }
 
   private updateBonusBadge() {
-    if (!this.bonus) {
-      this.activeBonus.classList.add('hidden');
-      return;
-    }
-
-    this.activeBonus.classList.remove('hidden');
-    this.activeBonus.style.borderColor = `#${COLOR_HEX[this.bonus].toString(16).padStart(6, '0')}`;
-    this.activeBonus.style.background = `#${COLOR_HEX[this.bonus].toString(16).padStart(6, '0')}`;
+    if (!this.halo) return;
+    this.halo.visible = this.bonus !== null;
+    if (this.bonus) this.halo.material.color.setHex(COLOR_HEX[this.bonus]);
   }
 
   private popBreakEffect(y: number, color: SectorColor) {
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.55, 0.018, 8, 32),
-      new THREE.MeshBasicMaterial({ color: COLOR_HEX[color], transparent: true, opacity: 0.8 }),
-    );
-    ring.position.set(0, y + 0.02, this.towerRadius + 0.12);
-    ring.rotation.x = Math.PI / 2;
-    this.scene.add(ring);
-    setTimeout(() => this.disposeObject(ring), 180);
+    const group = new THREE.Group();
+    group.position.set(0, y, this.jumperZ);
+    const velocities: THREE.Vector3[] = [];
+    const geometry = new THREE.BoxGeometry(.07, .07, .07);
+    const material = new THREE.MeshToonMaterial({ color: COLOR_HEX[color], transparent: true });
+    for (let i = 0; i < 22; i++) {
+      const cube = new THREE.Mesh(geometry, material);
+      cube.position.set((Math.random() - .5) * .5, .05, (Math.random() - .5) * .3);
+      group.add(cube);
+      velocities.push(new THREE.Vector3((Math.random() - .5) * 3, 1 + Math.random() * 2, (Math.random() - .5) * 2));
+    }
+    this.scene.add(group);
+    this.bursts.push({ group, velocities, life: .8 });
+  }
+
+  private showScoreLabel(text: string, y: number) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 96;
+    const ctx = canvas.getContext('2d')!;
+    ctx.font = '900 54px sans-serif'; ctx.textAlign = 'center';
+    ctx.lineWidth = 7; ctx.strokeStyle = '#17213a'; ctx.fillStyle = '#fff077';
+    ctx.strokeText(text, 128, 65); ctx.fillText(text, 128, 65);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false }));
+    sprite.position.set(.6, y + .6, this.jumperZ + .3);
+    sprite.scale.set(.9, .34, 1);
+    this.scene.add(sprite);
+    this.scoreLabels.push({ sprite, life: .9 });
+  }
+
+  private updateEffects(dt: number) {
+    this.bursts = this.bursts.filter(burst => {
+      burst.life -= dt;
+      burst.group.children.forEach((child, i) => {
+        burst.velocities[i].y -= 8 * dt;
+        child.position.addScaledVector(burst.velocities[i], dt);
+        child.rotation.x += dt * 5; child.rotation.z += dt * 3;
+        ((child as THREE.Mesh).material as THREE.Material).opacity = Math.max(0, burst.life / .8);
+      });
+      if (burst.life <= 0) { this.disposeObject(burst.group); return false; }
+      return true;
+    });
+    this.scoreLabels = this.scoreLabels.filter(label => {
+      label.life -= dt;
+      label.sprite.position.y += dt * .6;
+      label.sprite.material.opacity = Math.min(1, Math.max(0, label.life * 3));
+      if (label.life <= 0) { this.disposeObject(label.sprite); return false; }
+      return true;
+    });
   }
 
   private popBounceEffect(y: number, color: SectorColor) {
@@ -771,8 +875,8 @@ class YTTowerGame {
   private frameTower() {
     // A close-up that does not depend on floor count or progress.
     const bounceHeight = this.config.bounceForce ** 2 / (2 * Math.max(0.1, this.config.gravity));
-    const framing = Math.max(1, 1.1 / this.camera.aspect, bounceHeight / 3.5);
-    this.camera.position.set(4.8 * framing, 0.8 + 2.2 * framing, 6.7 * framing);
+    const framing = Math.max(1, 0.7 / this.camera.aspect, bounceHeight / 3.5);
+    this.camera.position.set(0, 2.4 * framing, 7.4 * framing);
     this.camera.far = Math.max(160, this.config.floors * this.floorSpacing + 40);
     this.camera.updateProjectionMatrix();
     this.camera.lookAt(0, 0.8, 0);
@@ -795,8 +899,8 @@ class YTTowerGame {
     const materials = new Set<THREE.Material>();
     const textures = new Set<THREE.Texture>();
     object.traverse(child => {
-      if (child instanceof THREE.Mesh || child instanceof THREE.Points) {
-        geometries.add(child.geometry);
+      if (child instanceof THREE.Mesh || child instanceof THREE.Points || child instanceof THREE.Sprite) {
+        if (!(child instanceof THREE.Sprite)) geometries.add(child.geometry);
         for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
           materials.add(material);
           const map = (material as THREE.MeshBasicMaterial).map;

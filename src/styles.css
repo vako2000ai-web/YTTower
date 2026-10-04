@@ -125,6 +125,29 @@ body { background: #173c48; }
   display: none;
 }
 
+.hud-top { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: start; }
+.hud-top > div { padding: 12px 18px; width: fit-content; border-radius: 18px; background: #142238d9; border: 1px solid #ffffff35; box-shadow: 0 5px 20px #0003; }
+.hud-top .timer { justify-self: center; text-align: center; background: transparent; border: 0; box-shadow: none; }
+.hud-top .score { justify-self: end; text-align: right; }
+.hud-top strong { font-size: 32px; text-shadow: 0 2px 3px #0008; }
+.hud-top .timer strong { color: #ffe564; font-size: clamp(30px, 4vw, 58px); font-variant-numeric: tabular-nums; }
+.hud-side { position: absolute; top: 110px; display: grid; gap: 9px; font-size: 13px; font-weight: 700; }
+.hud-left { left: 0; }
+.hud-right { right: 0; text-align: right; }
+.hud-side > div { border: 2px solid #ffffff30; padding: 9px 14px; border-radius: 24px; background: #142238d9; width: fit-content; }
+.hud-right > div { justify-self: end; }
+.hud-right .combo { color: #ffe564; }
+.operator-controls { top: 280px; }
+@media (max-width: 760px) {
+  .hud-top > div { padding: 8px; border-radius: 12px; }
+  .hud-top strong { font-size: 22px; }
+  .hud-top .timer { padding: 8px 3px; }
+  .hud-top .timer strong { font-size: 28px; }
+  .hud-top span { font-size: 9px; }
+  .hud-side { top: 80px; font-size: 10px; gap: 5px; }
+  .hud-side > div { padding: 6px 8px; max-width: 155px; }
+}
+
 .run-category {
   margin-top: 8px;
   font-size: 13px;

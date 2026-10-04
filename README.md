@@ -71,7 +71,11 @@ configuration. Mechanics events mark a run as supported; cosmetic fireworks
 and character selection do not. The old unqualified record is ignored because
 its floor count and configuration cannot be established.
 Records from the former falling-through-floors mechanic are also kept separate
-from the new bounce-and-lift mechanic (record storage version 3).
+from the current short bounce-and-lift mechanic (record storage version 4).
+
+The reference-inspired view uses a fixed front camera, thick striped floor disks,
+a cartoon jumper with animated arms, a central timer, combo/bonus badges,
+cube debris, floating score labels, and a colored bonus halo.
 
 The tower and results use a typographic YTFunStream logo. Sponsor scheduling,
 advertiser assets, payment callbacks, seasons, and video clipping are not yet
@@ -87,11 +91,11 @@ Supported parameters:
 
 - `floors` or `N` — floor count, default `100`
 - `speed` — tower rotation speed, default `1.15`
-- `stars` — star spawn rate, default `0.85`
+- `stars` — star spawn rate, default `1.8`
 - `clouds` — cloud spawn rate, default `0.28`
 - `gold` — gold star chance, default `0.12`
-- `gravity` — gravity value, default `12.5`
-- `bounce` — bounce force, default `8.9`
+- `gravity` — gravity value, default `18`
+- `bounce` — bounce force, default `5.8`
 
 ## Streaming
 
