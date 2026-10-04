@@ -15,6 +15,8 @@ YTTower is an autonomous browser game for a YouTube stream. A cartoon jumper fal
 - HUD with time, floors, score, combo, bonus, and run number.
 - Result board for 5 seconds after all floors are broken.
 - Automatic restart after each run.
+- Camera stays anchored to the current floor during jumps; it descends only as
+  floors are cleared, so the tower no longer appears to bounce with the jumper.
 
 ## Setup
 
@@ -88,9 +90,16 @@ Supported parameters:
 
 ## Streaming
 
-The game now uses a bundled Singapore / Marina Bay Sands photograph behind the
-transparent 3D scene. It works without an external image request at runtime.
+The game chooses a random bundled city photograph when the page opens and keeps
+it throughout the session. The catalog includes Singapore, Tokyo, and New York.
+It works without an external image request at runtime.
 Photo source and license are in `public/assets/CREDITS.md`.
+
+To add backgrounds, place JPG, JPEG, PNG, WebP, or AVIF files in
+`src/assets/cities/`. Use descriptive filenames, for example `moscow-city.jpg`.
+Vite discovers them automatically; restart the development server or rebuild
+the production app after changing the catalog. Reload the page to make a new
+random selection (the same image can be selected again).
 
 Click **Включить музыку** to start the original upbeat procedural background
 music. Browsers require a user gesture for sound; the game still starts without

@@ -1,8 +1,13 @@
 # Background photograph
 
-`singapore.jpg`: photograph of Marina Bay Sands, Singapore, supplied by Unsplash.
+Photographs in `src/assets/cities`, supplied by Unsplash:
 
-Source image: https://images.unsplash.com/photo-1525625293386-3f8f99389edd
+- `singapore.jpg`: Marina Bay Sands, Singapore.
+  https://images.unsplash.com/photo-1525625293386-3f8f99389edd
+- `tokyo.jpg`: Akihabara street, Tokyo.
+  https://images.unsplash.com/photo-1540959733332-eab4deabeeaf
+- `new-york.jpg`: New York skyline.
+  https://images.unsplash.com/photo-1485871981521-5b1fd3805eee
 
 License: https://unsplash.com/license
 

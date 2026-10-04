@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import './styles.css';
 import { BackgroundMusic } from './music';
+import { chooseCityBackground } from './backgrounds';
 import { EventQueue, EVENT_NAMES, type StreamEvent, type EventKind } from './events';
 import { CATEGORY_NAMES, recordKey, loadJson, saveJson, readRecord, type RunCategory } from './records';
 
@@ -229,19 +230,18 @@ class YTTowerGame {
   }
 
   private setupSkyline() {
+    const background = chooseCityBackground();
+    if (!background) return;
     const backdrop = document.createElement('div');
     backdrop.className = 'city-background';
     const photo = document.createElement('img');
-    photo.src = `${import.meta.env.BASE_URL}assets/singapore.jpg`;
+    photo.src = background.url;
     photo.alt = '';
     backdrop.append(photo);
     document.body.prepend(backdrop);
-    const credit = document.createElement('a');
+    const credit = document.createElement('div');
     credit.className = 'photo-credit';
-    credit.href = 'https://unsplash.com/s/photos/marina-bay-sands';
-    credit.target = '_blank';
-    credit.rel = 'noopener noreferrer';
-    credit.textContent = 'SINGAPORE · MARINA BAY / UNSPLASH';
+    credit.textContent = background.name;
     document.body.append(credit);
   }
 
@@ -279,6 +279,8 @@ class YTTowerGame {
 
     this.buildTower();
     this.buildJumper();
+    this.jumper.position.set(0, this.jumperY, this.towerRadius + 0.38);
+    this.updateCamera(true);
   }
 
   private setupControls() {
@@ -746,10 +748,13 @@ class YTTowerGame {
     setTimeout(() => this.disposeObject(burst), 160);
   }
 
-  private updateCamera() {
-    const targetY = this.jumperY - 0.3;
+  private updateCamera(snap = false) {
+    // Anchor the view to the current floor, never to the jumper's bounce.
+    const targetY = -Math.min(this.brokenFloors, this.config.floors - 1) * this.floorSpacing + 0.8;
     const framing = Math.max(1, 1.1 / this.camera.aspect);
-    this.camera.position.lerp(new THREE.Vector3(4.8 * framing, targetY + 2.2 * framing, 6.7 * framing), 0.08);
+    const position = new THREE.Vector3(4.8 * framing, targetY + 2.2 * framing, 6.7 * framing);
+    if (snap) this.camera.position.copy(position);
+    else this.camera.position.lerp(position, 0.08);
     this.camera.lookAt(0, targetY, 0);
   }
 
